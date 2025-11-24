@@ -26,9 +26,13 @@ QUEUE_PREFIX = "a2a:sprint:"
 QUEUE_ENRICH = "enrich-tickets"
 QUEUE_CREATE = "create-jira"
 
+# OpenAI Models
+OPENAI_COMPLETION_MODEL = os.environ.get("OPENAI_COMPLETION_MODEL", "gpt-4o")
+OPENAI_EMBEDDING_MODEL = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+
 # Google Sheets
-SPREADSHEET_ID = "1nnErycyHRayc1OY_YWq06dOkaYTTPY9hTn6E3QwSXN4"
-SHEET_RANGE = "Sheet1!A1:J1000"
+SPREADSHEET_ID = os.environ["GOOGLE_SHEET_ID"]
+SHEET_RANGE = os.environ.get("GOOGLE_SHEET_RANGE", "Sheet1!A1:J1000")
 
 # Composio
 COMPOSIO_USER_ID = os.environ["COMPOSIO_USER_ID"]
@@ -50,7 +54,7 @@ openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 # Redis search indices
 tickets_idx = SearchIndex.from_existing("tickets_idx", redis_url=REDIS_URL)
 code_idx = SearchIndex.from_existing("code_idx", redis_url=REDIS_URL)
-embedder = OpenAITextVectorizer(model="text-embedding-3-small", api_config={"api_key": os.environ["OPENAI_API_KEY"]})
+embedder = OpenAITextVectorizer(model=OPENAI_EMBEDDING_MODEL, api_config={"api_key": os.environ["OPENAI_API_KEY"]})
 
 
 # Sheet columns: Sprint | Type | Title | Client Impact | Effort | Owner | Status | Assignee
@@ -184,7 +188,7 @@ Write in clear paragraphs. Be specific about code - this proves we've done seman
 """
     
     response = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model=OPENAI_COMPLETION_MODEL,
         messages=[{"role": "user", "content": textwrap.dedent(prompt)}]
     )
     
@@ -206,7 +210,7 @@ async def sprint_reader_agent(enrich_queue):
     task_prompt = f"Get all data from spreadsheet {SPREADSHEET_ID}, range {SHEET_RANGE}"
     
     completion = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model=OPENAI_COMPLETION_MODEL,
         messages=[{"role": "user", "content": task_prompt}],
         tools=tools,
     )
@@ -394,7 +398,7 @@ async def jira_creator_agent(create_queue):
     # Create Jira agent
     jira_agent = Agent(
         name="Jira Creator Agent",
-        instructions="""You are a helpful assistant that creates Jira tickets with the provided information. use "project_key": "SCRUM" and create the issues under the sprint they are""",
+        instructions=f"""You are a helpful assistant that creates Jira tickets with the provided information. Use "project_key": "{JIRA_PROJECT_KEY}" for all tickets.""",
         tools=jira_tools,
     )
     
@@ -438,6 +442,7 @@ async def jira_creator_agent(create_queue):
                 print(f"\n[AGENT 3] 🎫 Creating Jira ticket: {row_data['title'][:60]}...")
                 
                 # Prepare Jira creation prompt
+                sprint_name = row_data.get('sprint', 'Current Sprint')
                 jira_prompt = f"""
 Create a Jira ticket with the following details:
 
@@ -447,16 +452,16 @@ Issue Type: {row_data['type'] or 'Task'}
 Description: {description}
 Priority: {['Critical', 'High', 'Medium', 'Low'][min(row_data.get('priority', 2), 3)]}
 Assignee: {row_data['assignee'] or row_data['owner'] or ''}
-Labels: sprint-automation
+Labels: sprint-automation, {sprint_name.lower().replace(' ', '-')}
 Component: {JIRA_DEFAULT_COMPONENT if JIRA_DEFAULT_COMPONENT else 'No component'}
-Sprint ID: 1 (Sprint 2)
 
 Additional context:
+- Sprint: {sprint_name}
 - Client Impact: {row_data['client_impact']}
 - Effort: {row_data['effort']}
 - Owner: {row_data['owner']}
 
-Create this issue in Jira and assign it to Sprint ID 1.
+Create this issue in Jira.
 """
                 
                 # Use Agent/Runner pattern to create ticket
