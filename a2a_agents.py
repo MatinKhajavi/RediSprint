@@ -45,12 +45,12 @@ composio_agents = Composio(api_key=COMPOSIO_API_KEY, provider=OpenAIAgentsProvid
 # 2. For direct OpenAI API calls (Sheet reader) - without provider
 composio_direct = Composio(api_key=COMPOSIO_API_KEY) if COMPOSIO_API_KEY else Composio()
 
-openai_client = OpenAI(api_key="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")
+openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 # Redis search indices
 tickets_idx = SearchIndex.from_existing("tickets_idx", redis_url=REDIS_URL)
 code_idx = SearchIndex.from_existing("code_idx", redis_url=REDIS_URL)
-embedder = OpenAITextVectorizer(model="text-embedding-3-small", api_config={"api_key": "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"})
+embedder = OpenAITextVectorizer(model="text-embedding-3-small", api_config={"api_key": os.environ["OPENAI_API_KEY"]})
 
 
 # Sheet columns: Sprint | Type | Title | Client Impact | Effort | Owner | Status | Assignee
@@ -138,93 +138,49 @@ def generate_enriched_description(row_data, tickets_hits, code_hits):
         for h in tickets_hits[:3]
     ]) or "No relevant past tickets found"
     
-    # Format relevant code files with more detail
-    refs_code = "\n".join([
-        f"- {h['path']} ({h['lang']})\n  Preview: {h.get('body', '')[:200]}..."
+    # Format relevant code files with actual code snippets
+    refs_code = "\n\n".join([
+        f"File: {h['path']} ({h['lang']})\n```{h['lang']}\n{h.get('body', '')[:500]}\n```"
         for h in code_hits[:3]
     ]) or "No relevant code files found"
     
     prompt = f"""
-You are a senior software engineer writing a detailed Jira ticket description.
+You are writing a Jira ticket description for: "{title}"
 
-TICKET TITLE: "{title}"
-
-JIRA FIELDS:
+Context:
 - Type: {itype}
 - Priority: {impact}
 - Story Points: {effort}
 - Sprint: {sprint}
-- Reporter: {reporter}
-- Assignee: {assignee}
 
-SIMILAR PAST TICKETS (for style reference):
+Similar past tickets for reference:
 {refs_tickets}
 
-RELEVANT CODE FILES:
+CODE ANALYSIS - Relevant codebase files found:
 {refs_code}
 
-YOUR TASK:
-Analyze the codebase and write a comprehensive Jira ticket description that demonstrates deep understanding of the existing architecture.
+Write a clear, concise Jira ticket description in PLAIN TEXT (no markdown headers). Keep it under 350 words.
 
-REQUIRED SECTIONS:
+IMPORTANT: You MUST analyze the actual code shown above and reference specific:
+- Function names, class names, or methods that need modification
+- File paths where changes will be made
+- Current implementation details visible in the code snippets
 
-1. **Overview** (2-3 paragraphs)
-   - What needs to be done and why
-   - Justify the Priority ({impact}) based on impact/urgency
+Structure your description as:
 
-2. **Current Implementation Analysis** ⭐
-   - Reference SPECIFIC line numbers from the codebase
-   - Describe how current code works
-   - Identify relevant files/functions/classes
-   - Example: "Currently at line 11 in main.py, storage uses `todos_db = {{}}`"
+1. OVERVIEW (2-3 sentences): What needs to be done and why
 
-3. **Proposed Solution**
-   - High-level approach
-   - Technology choices with justification
+2. CODE ANALYSIS: Based on the codebase snippets above, identify which specific functions/classes/files need changes. Reference actual function names and explain what modifications are needed. This section should prove you've analyzed the real code.
 
-4. **Technical Implementation**
-   - Break down by file or component
-   - Provide concrete code examples following existing patterns
-   - Show what needs to change with line number ranges
+3. WHY IT MATTERS: Justify the {impact} priority with concrete impact on users or system
 
-5. **Files to Modify**
-   - List each file: ✏️ modify existing, ➕ create new
-   - Brief reason for each
+4. ACCEPTANCE CRITERIA (simple bullet list with dashes):
+- Specific, testable outcomes
+- Include at least one criterion about the code changes
 
-6. **Testing Strategy**
-   - Reference existing test patterns
-   - Provide concrete test examples
-   - Mention fixture updates needed
+5. TESTING: Brief note on how to verify the changes work
 
-7. **Backward Compatibility**
-   - Will existing functionality break?
-   - Migration strategy if needed
-
-8. **Acceptance Criteria** (checkbox format)
-   - [ ] Specific, testable criteria
-   - [ ] Cover happy path and edge cases
-
-9. **Story Points Justification**
-   - Why {effort} points?
-   - Reference: files to change, testing complexity, risk level
-
-10. **Related Work** (if applicable)
-    - Reference related past tickets
-
-CRITICAL REQUIREMENTS:
-✅ MUST include specific line numbers from code
-✅ MUST analyze current implementation before proposing changes
-✅ MUST provide concrete code examples (not "update the function")
-✅ MUST consider cross-file impacts
-✅ MUST reference existing patterns in codebase
-✅ MUST consider testing implications
-
-❌ AVOID vague statements like "update the API"
-❌ AVOID generic advice without code references
-❌ AVOID ignoring existing test infrastructure
-
-OUTPUT FORMAT:
-Write the full ticket description following the structure above. Be specific, reference actual line numbers, and demonstrate deep codebase understanding.
+Write in clear paragraphs. Be specific about code - this proves we've done semantic search on the codebase!
 """
     
     response = openai_client.chat.completions.create(
