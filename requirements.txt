@@ -1,0 +1,11 @@
+python-dotenv
+composio-core
+composio-openai-agents
+openai
+agents
+redis
+redisvl
+a2a-redis
+tiktoken
+numpy
+flask
